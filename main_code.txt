@@ -1,0 +1,478 @@
+#include <mega128.h>                               
+#include <string.h>               
+#include <delay.h>     
+#include <stdlib.h> 
+#include <keyscan.h>        //keyscan 헤더 선언   
+#include "lcd.h"     
+
+#define easy    0
+#define normal    1
+#define hard    2
+#define Star    13   
+#define Sharp   15
+#define iStar    18            
+
+unsigned char KEY_NUM_c1;
+unsigned char KEY_NUM_c1c;
+unsigned char KEY_NUM_c3;
+unsigned char KEY_NUM_c3c;        
+
+unsigned char mode[7] = {32,32,32,32,32,32,'/0'};               //모드 문자열 선언   
+unsigned char gamenumber[12] = {32,32,32,32,32,32,32,32,32,32,32, '\0'};                //발생된 난수를 저장하는 변수         
+unsigned char answernumber[12] = {32,32,32,32,32,32,32,32,32,32,32, '\0'};            //입력한 정답 저장하는 변수            
+
+int step;                   //게임 단계 설정 변수
+int mode_select;            //모드 설정 변수
+char time;                  //정답 입력 단계에서 남은 시간 표시 위한 캐릭터 변수
+unsigned int answertime;            //정답 입력시간(타이머/카운터에서 5초 세기 위한 변수) 
+unsigned int answertime1;           //정답 입력시간(타이머/카운터에서 5초 세기 위한 변수)
+unsigned int hundred_us = 0;            //딜레이 생성을 위한 변수
+int buzzer_time;                    //부저 음이 눌리는 시간
+unsigned int buzzer_counter;        //부저 음 카운터 변수 
+int buzzer_f;                       //부저 음에 대한 주파수
+unsigned char randchar;             //난수 발생을 위한 캐릭터 변수
+
+void Init_Port(void)                //포트 설정 
+{ 
+    DDRG |= 0x10;                   //부저 음 출력을 위한 포트설정
+}           
+
+void Init_Timer2(void)                      //딜레이 타이머 레지스터 선언   
+{         
+    TIMSK = (1<<TOIE2);       
+    TCCR2 = (1<<CS21);          //8 분주비     
+    TCNT2 = -200;                    //100us 
+    SREG |= 0x80;                                           
+} 
+
+interrupt[TIM2_OVF] void timer_ovf2(void)       //여러 가지 동작 구현을 위한 타이머/카운터2 인터럽트     
+{   
+    TCNT2 = -177;
+    if(hundred_us) hundred_us--;   
+    randchar = rand()%1000;                 //난수를 시간 흐름에 따라 초기화하므로 중복 방지 
+    buzzer_counter++;                       //버저 음 출력을 위한 버저 카운터 ++        
+    if(buzzer_counter == buzzer_f){         //버저 카운터와 버저 음 주파수 비교
+        buzzer_counter = 0;                 //버저 카운터 초기화
+        PORTG ^= 0x10;                      //버저 음 출력
+    }
+    if(step == 3)       //정답 입력 단계에 들어선 경우     
+    {                                                                                       
+        answertime++;                                              
+        if(answertime == 10000)             //1초                         
+        {                                                                 
+            time--;                           
+            answertime1++; 
+            answertime = 0;     
+            if(answertime1 == 5)            //5초     
+            {                                         
+                time = 53;              //프로그램 재 동작시 시간이 5초부터 다시 출력되도록 초기화           
+                LCD_Clear();            //다음 단계로 넘어가기 전 LCD 클리어     
+                answertime1 = 0;       //정답입력시간 => 5초               
+                step = 4;               //입력시간 초과 시 다음 단계로  
+            }       
+        }         
+    }        
+} 
+
+void delay_100us(unsigned int us)       //딜레이 대체 함수
+{
+    hundred_us = us;
+}           
+
+void buzzer_gen(int a)      //버저 생성 함수
+{
+    buzzer_time = 211;      //버저가 울리는 시간 제한
+    buzzer_f = a;           //주파수를 입력받음       
+    buzzer_counter = 0;     //버저 카운터를 초기화
+    while(buzzer_time)      //buzzer_time동안 버저가 울림
+    {
+        delay_100us(10);
+        while(hundred_us);
+        buzzer_time--;      //버저 시간을 --
+    }
+    buzzer_f = -100;        //버저 음 울리는 시간이 끝나면 버저가 울리지 않도록 -100으로 초기화
+} 
+
+unsigned char random_number(void)            //난수 발생 함수 
+{ 
+    unsigned char number;  
+    number = (randchar + rand()%1000)%10 + 48; 
+    return number;          //난수 발생 후 스트링 전달받아 저장  
+} 
+
+void game_start(void)           //게임 초기단계         
+{
+    int i;
+        for(i=0;i<8;i++)
+        { 
+            gamenumber[i] = 32;             //프로그램 재 동작 시 문자열 초기화      
+            answernumber[i] = 32;
+        } 
+        
+        LCD_Pos(0,0);   
+        LCD_Str(" GAME MODE");               //게임 모드 출력
+        LCD_Pos(1,8);   
+        LCD_Str(mode);       
+        
+        if(KEY_NUM_c1 == Star) {
+        if(KEY_NUM_c3c == Sharp) {
+            KEY_NUM_c3 = 0;
+            KEY_NUM_c1c = 0;
+            KEY_NUM_c3c = 0;
+            KEY_NUM_c1 = 0;  
+            LCD_Clear();     
+            step = 1;         //*+# 누른 경우 모드 설정 단계로             
+        } 
+            KEY_NUM_c1 = 0;
+            KEY_NUM_c1c = 0;
+        }
+
+        if(KEY_NUM_c3c == Sharp) {                   
+            LCD_Clear();                     
+            step = 2;         //# 누른 경우 게임 시작    
+            KEY_NUM_c3c = 0;
+            KEY_NUM_c3 = 0;                    
+        }             
+} 
+
+ 
+
+void mode_selection(void)       //모드선택단계   
+{
+        if(KEY_NUM_c1 == Star) {
+        if(KEY_NUM_c3c == Sharp) {
+            KEY_NUM_c3 = 0;
+            KEY_NUM_c1c = 0;
+            KEY_NUM_c3c = 0;
+            KEY_NUM_c1 = 0;  
+            LCD_Clear();     
+            step = 0;         //*+# 누른 경우 모드 설정 단계로             
+        } 
+            KEY_NUM_c1 = 0;
+        }
+        if(KEY_NUM_c3 == Sharp) {
+        if(KEY_NUM_c1c == Star) {
+            KEY_NUM_c3 = 0;
+            KEY_NUM_c1c = 0;
+            KEY_NUM_c3c = 0;
+            KEY_NUM_c1 = 0;  
+            LCD_Clear();     
+            step = 0;         //*+# 누른 경우 모드 설정 단계로             
+        } 
+            KEY_NUM_c3 = 0;
+            KEY_NUM_c3c = 0;
+        } 
+                                                           
+        if(KEY_NUM_c1c == Star) { 
+            LCD_Clear();           
+            mode_select++;        //*누른 경우 모드 변경   
+            KEY_NUM_c1 = 0;
+            KEY_NUM_c1c = 0;                         
+        }                                               
+        if(mode_select == 3) mode_select = 0;       //모드 3개이므로 넘어갈 시 초기화 
+
+        LCD_Pos(0,0); 
+        LCD_Str(" MODE SELECT"); 
+
+        if(mode_select == easy){                         
+            strcpy(mode, "EASY");              //EASY 출력         
+        } 
+
+        if(mode_select == normal){                                                              
+            strcpy(mode, "NORMAL");              //NORMAL 출력   
+        } 
+
+        if(mode_select == hard){                                                                  
+            strcpy(mode, "HARD");              //HARD 출력   
+        } 
+
+        LCD_Pos(1,8); 
+        LCD_Str(mode);  
+}                          
+
+void game_question(void)            //문제 출력 단계   
+{                                           
+    int i;     
+    if(mode_select == easy) {          //모드 검사 easy mode     
+        for(i=0;i<3;i++)            //3자리 난수 발생    
+        {                                                                           
+            gamenumber[i] = random_number();   
+            delay_us(1);         
+        }           
+    }                
+
+    if(mode_select == normal) {          //normal mode       
+        for(i=0;i<5;i++)            //5자리 난수 발생               
+        {                               
+            gamenumber[i] = random_number(); 
+            delay_us(1); 
+        }           
+    }            
+
+    if(mode_select == hard) {          //hard mode     
+        for(i=0;i<7;i++)            //7자리 난수 발생       
+        {                           
+            gamenumber[i] = random_number(); 
+            delay_us(1);       
+        }         
+    } 
+        
+        delay_100us(10000);         //1초간 게임 시작을 알림
+        while(hundred_us)
+        {
+            LCD_Pos(0,0);   
+            LCD_Str("  GAME START!!");
+        }         
+
+        LCD_Clear();
+        delay_100us(30000);         //3초간 문제를 출력
+        while(hundred_us)
+        {     
+            LCD_Pos(0,0);   
+            LCD_Str("  QUESTION"); 
+            LCD_Pos(1,6);     
+            LCD_Str(gamenumber); 
+        } 
+        LCD_Clear();       
+
+        step = 3;         //정답 입력 단계로    
+}                                                            
+
+void answer_input(void)         //정답 입력 단계     
+{                                                 
+    bit Key_off_flag = 0;   
+    unsigned char New_key_data = 0, key_num=0;       
+
+    while(answertime)     
+    {                                 
+        if(key_num == iStar) { 
+            LCD_Clear();
+            delay_100us(1);
+            while(hundred_us);
+            answertime = 0;         //정답입력시간 초기화
+            answertime1 = 0;
+            time = 53;              //시간 출력을 5초부터 할 수 있도록 초기화
+            step = 4;               //* 누르면 바로 정답 확인 단계로 
+            break;
+        }                            
+
+        LCD_Pos(1,2);               //5초부터 1초까지 알려줌     
+        LCD_Char(time);   
+        LCD_Pos(1,3);   
+        LCD_Char('s');              
+
+        New_key_data = KeyScan(); 
+        if(New_key_data)   
+        {                   
+            if(New_key_data%4 != 0)     
+            {                                     
+                key_num = (New_key_data/4)*3+(New_key_data%4);   
+                if(key_num >= 10)       
+                {                                  
+                switch(key_num)   
+                {                                                                                      
+                    case 10:     
+                        key_num = iStar; 
+                        break;     
+                    case 11:       
+                        key_num = Null;   
+                        break;     
+                    case 12:         
+                        key_num = Sharp;   
+                     break;       
+                }             
+                }     
+            else;       
+        }                       
+        else key_num = (New_key_data/4)+9;          
+
+        if(mode_select == easy)        //EASY모드일 경우      
+        {   
+            if(key_num <= 9) {
+            if(Key_off_flag) 
+            {                           
+                answernumber[3] = answernumber[2];      //3자리 수만 입력받음   
+                answernumber[2] = answernumber[1];   
+                answernumber[1] = answernumber[0];
+                Key_off_flag = ~Key_off_flag;       
+            }  
+            answernumber[0] = 48+key_num; 
+            }
+            else; 
+            
+            if(answernumber[3] != 32)           //3자리 벗어날 경우 초기화   
+            {                                           
+                answernumber[0] = 32;   
+                answernumber[1] = 32;                                                                                 
+                answernumber[2] = 32;   
+                answernumber[3] = 32;   
+            }                                   
+        }                      
+
+        if(mode_select == normal)        //NORMAL모드   
+        { 
+            if(key_num <= 9) {
+            if(Key_off_flag)     
+            {               
+                answernumber[5] = answernumber[4]; 
+                answernumber[4] = answernumber[3]; 
+                answernumber[3] = answernumber[2]; 
+                answernumber[2] = answernumber[1];
+                answernumber[1] = answernumber[0]; 
+                Key_off_flag = ~Key_off_flag; 
+            }                            
+            answernumber[0] = key_num+48;
+            }                  
+
+            if(answernumber[5] != 32)       //5자리 넘어갈 경우 초기화 
+            {                                               
+                answernumber[0] = 32; 
+                answernumber[1] = 32;   
+                answernumber[2] = 32; 
+                answernumber[3] = 32; 
+                answernumber[4] = 32; 
+                answernumber[5] = 32;
+            } 
+
+        } 
+        if(mode_select == hard)        //HARD모드      
+        { 
+            if(key_num <= 9) {
+            if(Key_off_flag)     
+            {                               
+                answernumber[7] = answernumber[6]; 
+                answernumber[6] = answernumber[5];   
+                answernumber[5] = answernumber[4]; 
+                answernumber[4] = answernumber[3];                                                                                                       
+                answernumber[3] = answernumber[2];   
+                answernumber[2] = answernumber[1];   
+                answernumber[1] = answernumber[0]; 
+                Key_off_flag = ~Key_off_flag;   
+            }                                                        
+            answernumber[0] = key_num+48;
+            } 
+            if(answernumber[7] != 32)       //7자리 넘어갈 경우 초기화   
+            {                                     
+                answernumber[0] = 32;   
+                answernumber[1] = 32;   
+                answernumber[2] = 32;                                                                                 
+                answernumber[3] = 32;     
+                answernumber[4] = 32;     
+                answernumber[5] = 32;
+                answernumber[6] = 32;   
+                answernumber[7] = 32;   
+            }                       
+        }       
+    }         
+    else               
+        Key_off_flag = 1;    
+            LCD_Pos(1, 6);               
+            LCD_Str(answernumber);      //입력받은 값 출력   
+    }    
+}  
+
+void answer_check(void)         //정답 확인 단계 
+{ 
+        int i;
+        int ret; 
+        ret = strcmp(answernumber,gamenumber);          // 두 문자열을 비교
+        if(!ret)        //일치할 경우 축하 문자와 축하음 출력
+        { 
+            LCD_Pos(0,0);   
+            LCD_Str("CONGRATULATON!!");
+            LCD_Pos(1,0);
+            LCD_Str("              ");    
+            for(i=0;i<3;i++)
+            {     
+                buzzer_gen(12);
+                buzzer_gen(8);
+                buzzer_gen(6);
+            }                              
+        } 
+
+        else            //일치하지 않을 경우 실패 문자와 실패음 출력
+
+        {
+            LCD_Pos(0,0);
+            LCD_Str("              ");     
+            LCD_Pos(1,0);                             
+            LCD_Str("    FAIL TT     "); 
+            for(i=0;i<3;i++)
+            {              
+                buzzer_gen(6); 
+                buzzer_gen(8);
+                buzzer_gen(9);
+            }            
+        } 
+        LCD_Clear();        //화면 초기화         
+        delay_100us(100);
+        while(hundred_us);                                                      
+        step = 0;           //초기 단계로       
+}             
+
+void main(void)             //메인함수  
+{
+    bit Key_off_flag1 = 0;       
+    unsigned char New_key_data1 = 0;                               
+    bit Key_off_flag2 = 0;       
+    unsigned char New_key_data2 = 0;                  
+
+    LCD_Init();             //각종 포트 초기화   
+    Init_Port();  
+    Init_Port_keyscan();    
+    Init_Timer2(); 
+    
+    time = 53;              //각종 변수 초기화 
+    step = 0;  
+    mode_select = 0;
+    answertime = 0;
+    answertime1 = 0;
+    buzzer_counter = 1; 
+    buzzer_time = 0;
+    
+    strcpy(mode, "EASY");       //가장 초기 화면엔 이지모드로 출력
+
+    while(1)       
+    {
+        New_key_data1 = KeyScan_c1();                      
+        New_key_data2 = KeyScan_c3(); 
+        if(step == 0){          //단계별로 함수 실행
+            game_start();       //게임 초기 단계    
+        }                           
+        if(step == 1){   
+            mode_selection();   //모드 선택 단계
+        }                           
+        if(step == 2){       
+            game_question();    //문제 출력 단계   
+        }             
+        if(step == 3){       
+            answer_input();     //정답 입력 단계 
+        }                     
+        if(step == 4){     
+            answer_check();     //정답 확인 단계
+        }               
+        KEY_NUM_c1 = KeyScan_c1();      //조건 확인하기 위해 키스캔(1열) 입력받음(채터링x)
+        KEY_NUM_c3 = KeyScan_c3();      //조건 확인하기 위해 키스캔(3열) 입력받음(채터링x)      
+        
+        if(New_key_data1)   
+        {                                                        
+            if(Key_off_flag1)         
+            {
+                KEY_NUM_c1c = KeyScan_c1();    //조건 확인하기 위해 키스캔(1열) 입력받음(채터링ㅇ)
+                Key_off_flag1 = ~Key_off_flag1;                                                                                     
+            }                                            
+        }             
+        else       
+            Key_off_flag1 = 1; 
+        if(New_key_data2)   
+        {                                                        
+            if(Key_off_flag2)         
+            {
+                KEY_NUM_c3c = KeyScan_c3();    //조건 확인하기 위해 키스캔(3열) 입력받음(채터링ㅇ)
+                Key_off_flag2 = ~Key_off_flag2;                                                                                     
+            }                                            
+        }             
+        else       
+            Key_off_flag2 = 1;
+    }         
+} 
